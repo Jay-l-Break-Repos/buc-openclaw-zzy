@@ -149,7 +149,9 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Chat API: http://localhost:${PORT}/api/chats  (search/stats/export/delete also available)`);
 });
 
-// Non-blocking — upgrades storage from in-memory to MongoDB when available
-connectDB();
+// Attempt MongoDB connection in the background (non-blocking).
+// If unavailable, all routes use the in-memory fallback store.
+// Suppress unhandled rejection — connectDB never rejects.
+connectDB().catch(() => {});
 
 export default app;

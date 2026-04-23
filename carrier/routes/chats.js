@@ -14,10 +14,20 @@
 
 import { Router } from 'express';
 import { randomBytes } from 'crypto';
-import Chat from '../models/Chat.js';
 import { isReady } from '../db.js';
 
 const router = Router();
+
+// Lazy-load the Chat model only when MongoDB is actually available,
+// to avoid any import-time errors if Mongoose hasn't connected yet.
+let Chat = null;
+async function getChat() {
+  if (!Chat) {
+    const mod = await import('../models/Chat.js');
+    Chat = mod.default;
+  }
+  return Chat;
+}
 
 /* ------------------------------------------------------------------ */
 /*  In-memory fallback store                                            */
@@ -72,9 +82,10 @@ router.post('/', async (req, res) => {
     }
 
     if (isReady()) {
+      const C = await getChat();
       const chatData = { user, text, channel };
       if (timestamp !== undefined) chatData.timestamp = timestamp;
-      const chat = await Chat.create(chatData);
+      const chat = await C.create(chatData);
       return res.status(201).json(chat);
     }
 
@@ -97,9 +108,10 @@ router.get('/', async (req, res) => {
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
     if (isReady()) {
+      const C = await getChat();
       const [messages, total] = await Promise.all([
-        Chat.find().sort({ timestamp: -1 }).skip(offset).limit(limit).lean(),
-        Chat.countDocuments(),
+        C.find().sort({ timestamp: -1 }).skip(offset).limit(limit).lean(),
+        C.countDocuments(),
       ]);
       return res.json({ messages, pagination: { total, limit, offset, hasMore: offset + messages.length < total } });
     }
@@ -126,11 +138,12 @@ router.get('/search', async (req, res) => {
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
     if (isReady()) {
+      const C = await getChat();
       const regex = new RegExp(q, 'i');
       const filter = { $or: [{ text: regex }, { user: regex }, { channel: regex }] };
       const [messages, total] = await Promise.all([
-        Chat.find(filter).sort({ timestamp: -1 }).skip(offset).limit(limit).lean(),
-        Chat.countDocuments(filter),
+        C.find(filter).sort({ timestamp: -1 }).skip(offset).limit(limit).lean(),
+        C.countDocuments(filter),
       ]);
       return res.json({ messages, pagination: { total, limit, offset, hasMore: offset + messages.length < total } });
     }
@@ -153,20 +166,21 @@ router.get('/search', async (req, res) => {
 router.get('/stats', async (req, res) => {
   try {
     if (isReady()) {
+      const C = await getChat();
       const [totalMessages, byChannel, topUsers, recentActivity] = await Promise.all([
-        Chat.countDocuments(),
-        Chat.aggregate([
+        C.countDocuments(),
+        C.aggregate([
           { $group: { _id: '$channel', count: { $sum: 1 } } },
           { $sort: { count: -1 } },
           { $project: { _id: 0, channel: '$_id', count: 1 } },
         ]),
-        Chat.aggregate([
+        C.aggregate([
           { $group: { _id: '$user', count: { $sum: 1 } } },
           { $sort: { count: -1 } },
           { $limit: 10 },
           { $project: { _id: 0, user: '$_id', count: 1 } },
         ]),
-        Chat.aggregate([
+        C.aggregate([
           { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
           { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } }, count: { $sum: 1 } } },
           { $sort: { _id: 1 } },
@@ -221,7 +235,7 @@ router.get('/export', async (req, res) => {
     const format = (req.query.format || 'json').toLowerCase();
 
     const messages = isReady()
-      ? await Chat.find().sort({ timestamp: 1 }).lean()
+      ? await (await getChat()).find().sort({ timestamp: 1 }).lean()
       : [...memStore].reverse(); // oldest first
 
     if (format === 'csv') {
@@ -256,10 +270,11 @@ router.delete('/:id', async (req, res) => {
     const { id } = req.params;
 
     if (isReady()) {
+      const C = await getChat();
       if (!id.match(/^[a-f\d]{24}$/i)) {
         return res.status(400).json({ error: 'Invalid message id' });
       }
-      const deleted = await Chat.findByIdAndDelete(id);
+      const deleted = await C.findByIdAndDelete(id);
       if (!deleted) return res.status(404).json({ error: 'Message not found' });
       return res.json({ message: 'Message deleted', deleted });
     }
