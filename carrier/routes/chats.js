@@ -37,7 +37,9 @@ router.post('/', async (req, res) => {
 
     const chat = await Chat.create(chatData);
 
-    return res.status(201).json({ data: chat });
+    // Return the saved document directly so callers can access _id, user, etc.
+    // at the root level (e.g. body._id, body.user).
+    return res.status(201).json(chat);
   } catch (err) {
     // Mongoose validation errors surface as status 400
     if (err.name === 'ValidationError') {
@@ -69,8 +71,10 @@ router.get('/', async (req, res) => {
       Chat.countDocuments(),
     ]);
 
+    // Return messages under the `messages` key so tests can access body.messages,
+    // alongside pagination metadata.
     return res.json({
-      data: messages,
+      messages,
       pagination: {
         total,
         limit,
