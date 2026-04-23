@@ -1,10 +1,15 @@
 import express from 'express';
 import { checkTwitchAccessControl } from './access-control.js';
+import { connectDB } from './db.js';
+import chatRouter from './routes/chats.js';
 
 const app = express();
 const PORT = process.env.PORT || 9090;
 
 app.use(express.json());
+
+// Mount chat API routes
+app.use('/api/chats', chatRouter);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -20,7 +25,8 @@ app.get('/', (req, res) => {
     endpoints: {
       '/health': 'Health check',
       '/vuln': 'POST - Demonstrate the access control bypass',
-      '/test-scenarios': 'GET - Show test scenarios'
+      '/test-scenarios': 'GET - Show test scenarios',
+      '/api/chats': 'POST - Store a new chat message / GET - List chat messages (supports ?limit=&offset=)'
     }
   });
 });
@@ -109,12 +115,21 @@ app.post('/vuln', (req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`OpenClaw Twitch vulnerability demo running on port ${PORT}`);
-  console.log(`Vulnerability: GHSA-33rq-m5x2-fvgf`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
-  console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
-});
+// Connect to MongoDB then start the HTTP server
+connectDB()
+  .then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`OpenClaw Twitch vulnerability demo running on port ${PORT}`);
+      console.log(`Vulnerability: GHSA-33rq-m5x2-fvgf`);
+      console.log(`Health check: http://localhost:${PORT}/health`);
+      console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
+      console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
+      console.log(`Chat API: http://localhost:${PORT}/api/chats`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to connect to MongoDB:', err);
+    process.exit(1);
+  });
 
 export default app;
