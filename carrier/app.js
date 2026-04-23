@@ -136,19 +136,19 @@ app.post('/vuln', (req, res) => {
   }
 });
 
-// Start the HTTP server immediately so health checks always respond,
-// then attempt the MongoDB connection in the background.
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`OpenClaw Twitch vulnerability demo running on port ${PORT}`);
-  console.log(`Vulnerability: GHSA-33rq-m5x2-fvgf`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`Readiness probe: http://localhost:${PORT}/ready`);
-  console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
-  console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
-  console.log(`Chat API: http://localhost:${PORT}/api/chats  (search/stats/export/delete also available)`);
+// Wait for MongoDB to be ready, then start the HTTP server.
+// connectDB() retries with exponential back-off and never throws,
+// so this will block until the connection is established.
+connectDB().then(() => {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`OpenClaw Twitch vulnerability demo running on port ${PORT}`);
+    console.log(`Vulnerability: GHSA-33rq-m5x2-fvgf`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
+    console.log(`Readiness probe: http://localhost:${PORT}/ready`);
+    console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
+    console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
+    console.log(`Chat API: http://localhost:${PORT}/api/chats  (search/stats/export/delete also available)`);
+  });
 });
-
-// Non-blocking DB connection — chat endpoints return 503 until this resolves
-connectDB();
 
 export default app;

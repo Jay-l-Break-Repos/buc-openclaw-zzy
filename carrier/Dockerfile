@@ -23,8 +23,8 @@ EXPOSE 9090
 # timeout=3s: each probe must respond within 3 seconds
 # start-period=30s: don't count failures during the first 30s (gives mongo time to start)
 # retries=10: mark unhealthy only after 10 consecutive failures
-HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=10 \
-  CMD curl -f http://localhost:9090/ready || exit 1
+HEALTHCHECK --interval=5s --timeout=3s --start-period=60s --retries=12 \
+  CMD curl -f http://localhost:9090/health || exit 1
 
 # Run as non-root user
 RUN addgroup --system --gid 1001 nodejs
