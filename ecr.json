@@ -4,8 +4,16 @@
   "package": "openclaw",
   "setup_complexity": "platform",
   "app_port": 9090,
-  "env": {},
-  "sidecars": [],
+  "env": {
+    "MONGODB_URI": "mongodb://mongo:27017/twitch_chat"
+  },
+  "sidecars": [
+    {
+      "name": "mongo",
+      "image": "mongo:7",
+      "ports": ["27017:27017"]
+    }
+  ],
   "url": "http://localhost:9090",
   "pushed_at": "2026-04-18T18:07:45.048946+00:00",
   "dockerhub": {

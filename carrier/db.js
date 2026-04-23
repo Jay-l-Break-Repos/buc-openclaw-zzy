@@ -4,6 +4,10 @@
  * Reads the connection URI from the MONGODB_URI environment variable,
  * falling back to a local default so the app can start without extra
  * configuration during development.
+ *
+ * Design: the HTTP server starts immediately regardless of DB state so
+ * health-check endpoints always respond.  Chat endpoints check isReady()
+ * and return 503 if the connection has not yet been established.
  */
 
 import mongoose from 'mongoose';
@@ -14,19 +18,30 @@ const MONGODB_URI =
 let isConnected = false;
 
 /**
- * Connect to MongoDB.  Calling this multiple times is safe — subsequent
- * calls are no-ops if a connection is already established.
+ * Returns true once Mongoose has an open connection.
+ */
+export function isReady() {
+  return isConnected;
+}
+
+/**
+ * Connect to MongoDB.  Never throws — errors are logged and the caller
+ * can poll isReady() to know when the connection is up.
  */
 export async function connectDB() {
   if (isConnected) return;
 
-  await mongoose.connect(MONGODB_URI, {
-    // Recommended options to avoid deprecation warnings
-    serverSelectionTimeoutMS: 5000,
-  });
-
-  isConnected = true;
-  console.log(`MongoDB connected: ${MONGODB_URI}`);
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000,
+    });
+    isConnected = true;
+    console.log(`MongoDB connected: ${MONGODB_URI}`);
+  } catch (err) {
+    console.error(`MongoDB connection failed (${MONGODB_URI}): ${err.message}`);
+    // Do NOT re-throw — the HTTP server must keep running so health checks
+    // and other non-DB endpoints continue to respond.
+  }
 }
 
 export default mongoose;

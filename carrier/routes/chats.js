@@ -7,14 +7,23 @@
 
 import { Router } from 'express';
 import Chat from '../models/Chat.js';
+import { isReady } from '../db.js';
 
 const router = Router();
+
+/** Middleware: reject requests when MongoDB is not yet connected. */
+function requireDB(req, res, next) {
+  if (!isReady()) {
+    return res.status(503).json({ error: 'Database not available' });
+  }
+  next();
+}
 
 /* ------------------------------------------------------------------ */
 /*  POST /api/chats                                                     */
 /*  Body: { user, text, channel, timestamp? }                          */
 /* ------------------------------------------------------------------ */
-router.post('/', async (req, res) => {
+router.post('/', requireDB, async (req, res) => {
   try {
     const { user, text, channel, timestamp } = req.body;
 
@@ -56,7 +65,7 @@ router.post('/', async (req, res) => {
 /*    limit  – max number of messages to return (default: 20, max: 100)*/
 /*    offset – number of messages to skip for pagination (default: 0)  */
 /* ------------------------------------------------------------------ */
-router.get('/', async (req, res) => {
+router.get('/', requireDB, async (req, res) => {
   try {
     // Parse and clamp pagination parameters
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 100);
