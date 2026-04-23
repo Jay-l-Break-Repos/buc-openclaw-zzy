@@ -136,19 +136,20 @@ app.post('/vuln', (req, res) => {
   }
 });
 
-// Wait for MongoDB to be ready, then start the HTTP server.
-// connectDB() retries with exponential back-off and never throws,
-// so this will block until the connection is established.
-connectDB().then(() => {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`OpenClaw Twitch vulnerability demo running on port ${PORT}`);
-    console.log(`Vulnerability: GHSA-33rq-m5x2-fvgf`);
-    console.log(`Health check: http://localhost:${PORT}/health`);
-    console.log(`Readiness probe: http://localhost:${PORT}/ready`);
-    console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
-    console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
-    console.log(`Chat API: http://localhost:${PORT}/api/chats  (search/stats/export/delete also available)`);
-  });
+// Start the HTTP server immediately — the chat routes work with or without
+// MongoDB (in-memory fallback). connectDB() retries in the background and
+// upgrades to real persistence once a connection is established.
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`OpenClaw Twitch vulnerability demo running on port ${PORT}`);
+  console.log(`Vulnerability: GHSA-33rq-m5x2-fvgf`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`Readiness probe: http://localhost:${PORT}/ready`);
+  console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
+  console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
+  console.log(`Chat API: http://localhost:${PORT}/api/chats  (search/stats/export/delete also available)`);
 });
+
+// Non-blocking — upgrades storage from in-memory to MongoDB when available
+connectDB();
 
 export default app;

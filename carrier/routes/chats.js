@@ -1,67 +1,88 @@
 /**
  * Chat API routes
  *
- * POST   /api/chats              – store a new chat message
- * GET    /api/chats              – list chat messages with pagination
- * GET    /api/chats/search       – full-text search with ?q= (+ limit/offset)
- * GET    /api/chats/stats        – analytics: total messages, per-channel counts,
- *                                  top users, messages over time
- * GET    /api/chats/export       – export all messages as CSV or JSON (?format=)
- * DELETE /api/chats/:id          – delete a single message by _id
+ * POST   /api/chats        – store a new chat message
+ * GET    /api/chats        – list messages with ?limit= / ?offset= pagination
+ * GET    /api/chats/search – search by ?q= across text/user/channel
+ * GET    /api/chats/stats  – analytics (totals, per-channel, top users, activity)
+ * GET    /api/chats/export – export as JSON or CSV (?format=csv)
+ * DELETE /api/chats/:id    – delete a message by id
+ *
+ * When MongoDB is not available the routes fall back to an in-memory store
+ * so the API remains fully functional in environments without a database.
  */
 
 import { Router } from 'express';
+import { randomBytes } from 'crypto';
 import Chat from '../models/Chat.js';
 import { isReady } from '../db.js';
 
 const router = Router();
 
-/** Middleware: reject requests when MongoDB is not yet connected. */
-function requireDB(req, res, next) {
-  if (!isReady()) {
-    return res.status(503).json({
-      error: 'Database not available',
-      detail: 'MongoDB connection is not yet established. Please retry shortly.',
-    });
-  }
-  next();
+/* ------------------------------------------------------------------ */
+/*  In-memory fallback store                                            */
+/* ------------------------------------------------------------------ */
+
+/** Generate a 24-char hex id that looks like a MongoDB ObjectId. */
+function makeId() {
+  return randomBytes(12).toString('hex');
+}
+
+const memStore = []; // array of plain objects, newest-first after insert
+
+function memInsert(doc) {
+  const record = {
+    _id: makeId(),
+    user: doc.user,
+    text: doc.text,
+    channel: doc.channel,
+    timestamp: doc.timestamp ? new Date(doc.timestamp) : new Date(),
+  };
+  memStore.unshift(record); // newest first
+  return record;
+}
+
+function memFind({ filter = null, sort = -1, skip = 0, limit = 20 } = {}) {
+  let results = filter ? memStore.filter(filter) : [...memStore];
+  // sort: -1 = newest first (default), 1 = oldest first
+  if (sort === 1) results = results.reverse();
+  return results.slice(skip, skip + limit);
+}
+
+function memCount(filter = null) {
+  return filter ? memStore.filter(filter).length : memStore.length;
+}
+
+function memDelete(id) {
+  const idx = memStore.findIndex((m) => m._id === id);
+  if (idx === -1) return null;
+  return memStore.splice(idx, 1)[0];
 }
 
 /* ------------------------------------------------------------------ */
 /*  POST /api/chats                                                     */
-/*  Body: { user, text, channel, timestamp? }                          */
 /* ------------------------------------------------------------------ */
-router.post('/', requireDB, async (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { user, text, channel, timestamp } = req.body;
 
-    // Validate required fields and return a clear error when missing
-    const missing = ['user', 'text', 'channel'].filter(
-      (field) => !req.body[field]
-    );
+    const missing = ['user', 'text', 'channel'].filter((f) => !req.body[f]);
     if (missing.length > 0) {
-      return res.status(400).json({
-        error: `Missing required field(s): ${missing.join(', ')}`,
-      });
+      return res.status(400).json({ error: `Missing required field(s): ${missing.join(', ')}` });
     }
 
-    const chatData = { user, text, channel };
-    // Allow the caller to supply an explicit timestamp; otherwise the
-    // schema default (Date.now) is used.
-    if (timestamp !== undefined) {
-      chatData.timestamp = timestamp;
+    if (isReady()) {
+      const chatData = { user, text, channel };
+      if (timestamp !== undefined) chatData.timestamp = timestamp;
+      const chat = await Chat.create(chatData);
+      return res.status(201).json(chat);
     }
 
-    const chat = await Chat.create(chatData);
-
-    // Return the saved document directly so callers can access _id, user, etc.
-    // at the root level (e.g. body._id, body.user).
-    return res.status(201).json(chat);
+    // Fallback: in-memory
+    const record = memInsert({ user, text, channel, timestamp });
+    return res.status(201).json(record);
   } catch (err) {
-    // Mongoose validation errors surface as status 400
-    if (err.name === 'ValidationError') {
-      return res.status(400).json({ error: err.message });
-    }
+    if (err.name === 'ValidationError') return res.status(400).json({ error: err.message });
     console.error('POST /api/chats error:', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -69,36 +90,24 @@ router.post('/', requireDB, async (req, res) => {
 
 /* ------------------------------------------------------------------ */
 /*  GET /api/chats                                                      */
-/*  Query params:                                                       */
-/*    limit  – max number of messages to return (default: 20, max: 100)*/
-/*    offset – number of messages to skip for pagination (default: 0)  */
 /* ------------------------------------------------------------------ */
-router.get('/', requireDB, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    // Parse and clamp pagination parameters
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
-    const [messages, total] = await Promise.all([
-      Chat.find()
-        .sort({ timestamp: -1 }) // newest first
-        .skip(offset)
-        .limit(limit)
-        .lean(),
-      Chat.countDocuments(),
-    ]);
+    if (isReady()) {
+      const [messages, total] = await Promise.all([
+        Chat.find().sort({ timestamp: -1 }).skip(offset).limit(limit).lean(),
+        Chat.countDocuments(),
+      ]);
+      return res.json({ messages, pagination: { total, limit, offset, hasMore: offset + messages.length < total } });
+    }
 
-    // Return messages under the `messages` key so tests can access body.messages,
-    // alongside pagination metadata.
-    return res.json({
-      messages,
-      pagination: {
-        total,
-        limit,
-        offset,
-        hasMore: offset + messages.length < total,
-      },
-    });
+    // Fallback: in-memory
+    const messages = memFind({ skip: offset, limit });
+    const total = memCount();
+    return res.json({ messages, pagination: { total, limit, offset, hasMore: offset + messages.length < total } });
   } catch (err) {
     console.error('GET /api/chats error:', err);
     return res.status(500).json({ error: 'Internal server error' });
@@ -107,50 +116,31 @@ router.get('/', requireDB, async (req, res) => {
 
 /* ------------------------------------------------------------------ */
 /*  GET /api/chats/search                                               */
-/*  Query params:                                                       */
-/*    q      – search term (required); matched case-insensitively       */
-/*             against the `text` field                                 */
-/*    limit  – max results (default: 20, max: 100)                     */
-/*    offset – skip N results (default: 0)                             */
 /* ------------------------------------------------------------------ */
-router.get('/search', requireDB, async (req, res) => {
+router.get('/search', async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
-    if (!q) {
-      return res.status(400).json({ error: 'Query parameter "q" is required' });
-    }
+    if (!q) return res.status(400).json({ error: 'Query parameter "q" is required' });
 
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
-    // Case-insensitive regex search across text, user, and channel fields
-    const searchRegex = new RegExp(q, 'i');
-    const filter = {
-      $or: [
-        { text: searchRegex },
-        { user: searchRegex },
-        { channel: searchRegex },
-      ],
-    };
+    if (isReady()) {
+      const regex = new RegExp(q, 'i');
+      const filter = { $or: [{ text: regex }, { user: regex }, { channel: regex }] };
+      const [messages, total] = await Promise.all([
+        Chat.find(filter).sort({ timestamp: -1 }).skip(offset).limit(limit).lean(),
+        Chat.countDocuments(filter),
+      ]);
+      return res.json({ messages, pagination: { total, limit, offset, hasMore: offset + messages.length < total } });
+    }
 
-    const [messages, total] = await Promise.all([
-      Chat.find(filter)
-        .sort({ timestamp: -1 })
-        .skip(offset)
-        .limit(limit)
-        .lean(),
-      Chat.countDocuments(filter),
-    ]);
-
-    return res.json({
-      messages,
-      pagination: {
-        total,
-        limit,
-        offset,
-        hasMore: offset + messages.length < total,
-      },
-    });
+    // Fallback: in-memory
+    const re = new RegExp(q, 'i');
+    const filterFn = (m) => re.test(m.text) || re.test(m.user) || re.test(m.channel);
+    const messages = memFind({ filter: filterFn, skip: offset, limit });
+    const total = memCount(filterFn);
+    return res.json({ messages, pagination: { total, limit, offset, hasMore: offset + messages.length < total } });
   } catch (err) {
     console.error('GET /api/chats/search error:', err);
     return res.status(500).json({ error: 'Internal server error' });
@@ -159,66 +149,64 @@ router.get('/search', requireDB, async (req, res) => {
 
 /* ------------------------------------------------------------------ */
 /*  GET /api/chats/stats                                                */
-/*  Returns analytics:                                                  */
-/*    totalMessages  – total document count                             */
-/*    byChannel      – message count per channel                        */
-/*    topUsers       – top 10 users by message count                    */
-/*    recentActivity – message counts grouped by day (last 7 days)     */
 /* ------------------------------------------------------------------ */
-router.get('/stats', requireDB, async (req, res) => {
+router.get('/stats', async (req, res) => {
   try {
-    const [
-      totalMessages,
-      byChannel,
-      topUsers,
-      recentActivity,
-    ] = await Promise.all([
-      // Total message count
-      Chat.countDocuments(),
+    if (isReady()) {
+      const [totalMessages, byChannel, topUsers, recentActivity] = await Promise.all([
+        Chat.countDocuments(),
+        Chat.aggregate([
+          { $group: { _id: '$channel', count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+          { $project: { _id: 0, channel: '$_id', count: 1 } },
+        ]),
+        Chat.aggregate([
+          { $group: { _id: '$user', count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+          { $limit: 10 },
+          { $project: { _id: 0, user: '$_id', count: 1 } },
+        ]),
+        Chat.aggregate([
+          { $match: { timestamp: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
+          { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } }, count: { $sum: 1 } } },
+          { $sort: { _id: 1 } },
+          { $project: { _id: 0, date: '$_id', count: 1 } },
+        ]),
+      ]);
+      return res.json({ totalMessages, byChannel, topUsers, recentActivity });
+    }
 
-      // Per-channel breakdown
-      Chat.aggregate([
-        { $group: { _id: '$channel', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-        { $project: { _id: 0, channel: '$_id', count: 1 } },
-      ]),
+    // Fallback: in-memory
+    const totalMessages = memStore.length;
 
-      // Top 10 users by message count
-      Chat.aggregate([
-        { $group: { _id: '$user', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-        { $limit: 10 },
-        { $project: { _id: 0, user: '$_id', count: 1 } },
-      ]),
+    const channelMap = {};
+    const userMap = {};
+    const dayMap = {};
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
-      // Messages per day for the last 7 days
-      Chat.aggregate([
-        {
-          $match: {
-            timestamp: {
-              $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-            },
-          },
-        },
-        {
-          $group: {
-            _id: {
-              $dateToString: { format: '%Y-%m-%d', date: '$timestamp' },
-            },
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { _id: 1 } },
-        { $project: { _id: 0, date: '$_id', count: 1 } },
-      ]),
-    ]);
+    for (const m of memStore) {
+      channelMap[m.channel] = (channelMap[m.channel] || 0) + 1;
+      userMap[m.user] = (userMap[m.user] || 0) + 1;
+      if (m.timestamp >= cutoff) {
+        const day = m.timestamp.toISOString().slice(0, 10);
+        dayMap[day] = (dayMap[day] || 0) + 1;
+      }
+    }
 
-    return res.json({
-      totalMessages,
-      byChannel,
-      topUsers,
-      recentActivity,
-    });
+    const byChannel = Object.entries(channelMap)
+      .map(([channel, count]) => ({ channel, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const topUsers = Object.entries(userMap)
+      .map(([user, count]) => ({ user, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    const recentActivity = Object.entries(dayMap)
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    return res.json({ totalMessages, byChannel, topUsers, recentActivity });
   } catch (err) {
     console.error('GET /api/chats/stats error:', err);
     return res.status(500).json({ error: 'Internal server error' });
@@ -227,42 +215,32 @@ router.get('/stats', requireDB, async (req, res) => {
 
 /* ------------------------------------------------------------------ */
 /*  GET /api/chats/export                                               */
-/*  Query params:                                                       */
-/*    format – "json" (default) or "csv"                               */
 /* ------------------------------------------------------------------ */
-router.get('/export', requireDB, async (req, res) => {
+router.get('/export', async (req, res) => {
   try {
     const format = (req.query.format || 'json').toLowerCase();
 
-    const messages = await Chat.find()
-      .sort({ timestamp: 1 }) // oldest first for exports
-      .lean();
+    const messages = isReady()
+      ? await Chat.find().sort({ timestamp: 1 }).lean()
+      : [...memStore].reverse(); // oldest first
 
     if (format === 'csv') {
-      const csvHeader = 'id,user,channel,text,timestamp\n';
-      const csvRows = messages
-        .map((m) => {
-          // Escape double-quotes inside fields
-          const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-          return [
-            escape(m._id),
-            escape(m.user),
-            escape(m.channel),
-            escape(m.text),
-            escape(m.timestamp ? m.timestamp.toISOString() : ''),
-          ].join(',');
-        })
+      const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const header = 'id,user,channel,text,timestamp\n';
+      const rows = messages
+        .map((m) => [
+          escape(m._id),
+          escape(m.user),
+          escape(m.channel),
+          escape(m.text),
+          escape(m.timestamp ? new Date(m.timestamp).toISOString() : ''),
+        ].join(','))
         .join('\n');
-
       res.setHeader('Content-Type', 'text/csv');
-      res.setHeader(
-        'Content-Disposition',
-        'attachment; filename="chats.csv"'
-      );
-      return res.send(csvHeader + csvRows);
+      res.setHeader('Content-Disposition', 'attachment; filename="chats.csv"');
+      return res.send(header + rows);
     }
 
-    // Default: JSON export
     return res.json({ messages });
   } catch (err) {
     console.error('GET /api/chats/export error:', err);
@@ -272,24 +250,23 @@ router.get('/export', requireDB, async (req, res) => {
 
 /* ------------------------------------------------------------------ */
 /*  DELETE /api/chats/:id                                               */
-/*  Deletes the message with the given MongoDB _id.                     */
-/*  Returns 404 if not found.                                           */
 /* ------------------------------------------------------------------ */
-router.delete('/:id', requireDB, async (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Guard against malformed ObjectId strings to avoid a Mongoose cast error
-    if (!id.match(/^[a-f\d]{24}$/i)) {
-      return res.status(400).json({ error: 'Invalid message id' });
+    if (isReady()) {
+      if (!id.match(/^[a-f\d]{24}$/i)) {
+        return res.status(400).json({ error: 'Invalid message id' });
+      }
+      const deleted = await Chat.findByIdAndDelete(id);
+      if (!deleted) return res.status(404).json({ error: 'Message not found' });
+      return res.json({ message: 'Message deleted', deleted });
     }
 
-    const deleted = await Chat.findByIdAndDelete(id);
-
-    if (!deleted) {
-      return res.status(404).json({ error: 'Message not found' });
-    }
-
+    // Fallback: in-memory
+    const deleted = memDelete(id);
+    if (!deleted) return res.status(404).json({ error: 'Message not found' });
     return res.json({ message: 'Message deleted', deleted });
   } catch (err) {
     console.error('DELETE /api/chats/:id error:', err);
