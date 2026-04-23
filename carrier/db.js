@@ -1,23 +1,31 @@
 /**
  * MongoDB / Mongoose connection helper.
  *
- * Reads the connection URI from the MONGODB_URI environment variable,
- * falling back to a local default for development.
+ * URI resolution order:
+ *  1. MONGODB_URI environment variable (explicit override)
+ *  2. mongodb://mongo:27017/twitch_chat  (Docker sidecar by service name)
+ *  3. mongodb://localhost:27017/twitch_chat  (fallback for host-network mode)
  *
  * Design:
  *  - connectDB() returns a Promise that resolves only once Mongoose
  *    readyState === 1 (fully connected).
- *  - Retries indefinitely with exponential back-off (1s → 2s → 4s … 10s cap)
- *    so transient failures (e.g. mongo sidecar not yet ready) are recovered.
+ *  - Tries each URI in order; if the first fails it falls through to the next.
+ *  - After exhausting all URIs, retries from the beginning with exponential
+ *    back-off (1 s → 2 s → 4 s … capped at 10 s).
  *  - A single in-flight promise is shared so concurrent callers all wait
- *    for the same connection attempt rather than racing.
+ *    for the same connection attempt.
  *  - isReady() reads Mongoose's live readyState for accurate status.
  */
 
 import mongoose from 'mongoose';
 
-const MONGODB_URI =
-  process.env.MONGODB_URI || 'mongodb://localhost:27017/twitch_chat';
+// Build the list of URIs to try, in priority order.
+const URIS = process.env.MONGODB_URI
+  ? [process.env.MONGODB_URI]
+  : [
+      'mongodb://mongo:27017/twitch_chat',
+      'mongodb://localhost:27017/twitch_chat',
+    ];
 
 // Shared promise so multiple callers all await the same connection attempt.
 let connectionPromise = null;
@@ -30,54 +38,40 @@ export function isReady() {
 }
 
 /**
- * Connect to MongoDB, retrying with exponential back-off until successful.
- * Returns a Promise that resolves only once the connection is established.
+ * Connect to MongoDB, trying each URI in order and retrying with exponential
+ * back-off until a connection is established.
+ * Returns a Promise that resolves only once fully connected.
  * Safe to call multiple times — all callers share the same promise.
  */
 export function connectDB() {
-  // Already connected — resolve immediately.
-  if (mongoose.connection.readyState === 1) {
-    return Promise.resolve();
-  }
-
-  // Return the in-flight promise if one already exists.
-  if (connectionPromise) {
-    return connectionPromise;
-  }
+  if (mongoose.connection.readyState === 1) return Promise.resolve();
+  if (connectionPromise) return connectionPromise;
 
   connectionPromise = (async () => {
     const MAX_DELAY_MS = 10_000;
-    let attempt = 0;
+    let round = 0;
 
     while (true) {
-      // If a previous iteration left us in "connecting" state, wait for it
-      // to settle before trying again.
-      if (mongoose.connection.readyState === 2) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        if (mongoose.connection.readyState === 1) {
-          console.log(`MongoDB connected (via existing attempt): ${MONGODB_URI}`);
-          return;
+      round += 1;
+      for (const uri of URIS) {
+        // Disconnect cleanly before each attempt so mongoose.connect() works.
+        if (mongoose.connection.readyState !== 0) {
+          try { await mongoose.disconnect(); } catch (_) { /* ignore */ }
         }
-        // Still not connected — fall through to a fresh connect() call.
+
+        try {
+          await mongoose.connect(uri, { serverSelectionTimeoutMS: 5_000 });
+          console.log(`MongoDB connected (round ${round}, uri: ${uri})`);
+          return; // success — resolve the promise
+        } catch (err) {
+          console.error(`MongoDB connect failed (round ${round}, uri: ${uri}): ${err.message}`);
+        }
       }
 
-      attempt += 1;
-      try {
-        await mongoose.connect(MONGODB_URI, {
-          serverSelectionTimeoutMS: 5_000,
-        });
-        console.log(`MongoDB connected (attempt ${attempt}): ${MONGODB_URI}`);
-        return; // success
-      } catch (err) {
-        const delay = Math.min(1_000 * 2 ** (attempt - 1), MAX_DELAY_MS);
-        console.error(
-          `MongoDB connection failed (attempt ${attempt}): ${err.message}. ` +
-          `Retrying in ${delay}ms…`
-        );
-        // Reset connection state so the next mongoose.connect() call works.
-        try { await mongoose.disconnect(); } catch (_) { /* ignore */ }
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
+      // All URIs failed this round — wait before retrying.
+      const delay = Math.min(1_000 * 2 ** (round - 1), MAX_DELAY_MS);
+      console.error(`All MongoDB URIs failed. Retrying in ${delay}ms…`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   })();
 
