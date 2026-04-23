@@ -26,7 +26,12 @@ app.get('/', (req, res) => {
       '/health': 'Health check',
       '/vuln': 'POST - Demonstrate the access control bypass',
       '/test-scenarios': 'GET - Show test scenarios',
-      '/api/chats': 'POST - Store a new chat message / GET - List chat messages (supports ?limit=&offset=)'
+      'POST /api/chats': 'Store a new chat message',
+      'GET /api/chats': 'List chat messages (supports ?limit=&offset=)',
+      'GET /api/chats/search': 'Search messages by text/user/channel (?q=&limit=&offset=)',
+      'GET /api/chats/stats': 'Analytics: totals, per-channel counts, top users, recent activity',
+      'GET /api/chats/export': 'Export all messages as JSON or CSV (?format=json|csv)',
+      'DELETE /api/chats/:id': 'Delete a message by id'
     }
   });
 });
@@ -123,7 +128,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
   console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
-  console.log(`Chat API: http://localhost:${PORT}/api/chats`);
+  console.log(`Chat API: http://localhost:${PORT}/api/chats  (search/stats/export/delete also available)`);
 });
 
 // Non-blocking DB connection — chat endpoints return 503 until this resolves
