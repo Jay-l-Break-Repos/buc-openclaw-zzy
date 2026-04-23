@@ -11,15 +11,24 @@ app.use(express.json());
 // Mount chat API routes
 app.use('/api/chats', chatRouter);
 
-// Health check endpoint — reports DB readiness so the Docker HEALTHCHECK
-// and test harness can wait until the full stack is ready.
+// Health check endpoint — always returns 200 so the server is always
+// reachable. DB status is reported in the body for informational purposes.
 app.get('/health', (req, res) => {
-  const dbReady = isReady();
-  res.status(dbReady ? 200 : 503).json({
-    status: dbReady ? 'ok' : 'degraded',
-    db: dbReady ? 'connected' : 'connecting',
+  res.status(200).json({
+    status: 'ok',
+    db: isReady() ? 'connected' : 'connecting',
     vulnerability: 'GHSA-33rq-m5x2-fvgf',
   });
+});
+
+// Readiness probe — returns 200 only when MongoDB is connected.
+// Used by the Docker HEALTHCHECK so the test harness waits for the full
+// stack before running tests.
+app.get('/ready', (req, res) => {
+  if (!isReady()) {
+    return res.status(503).json({ ready: false, db: 'connecting' });
+  }
+  res.json({ ready: true, db: 'connected' });
 });
 
 // Root endpoint with info
@@ -29,7 +38,8 @@ app.get('/', (req, res) => {
     vulnerability: 'GHSA-33rq-m5x2-fvgf',
     description: 'Demonstrates allowFrom allowlist bypass in OpenClaw Twitch plugin',
     endpoints: {
-      '/health': 'Health check',
+      '/health': 'Health check (always 200)',
+      '/ready': 'Readiness probe (200 when DB connected, 503 otherwise)',
       '/vuln': 'POST - Demonstrate the access control bypass',
       '/test-scenarios': 'GET - Show test scenarios',
       'POST /api/chats': 'Store a new chat message',
@@ -132,6 +142,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`OpenClaw Twitch vulnerability demo running on port ${PORT}`);
   console.log(`Vulnerability: GHSA-33rq-m5x2-fvgf`);
   console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`Readiness probe: http://localhost:${PORT}/ready`);
   console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
   console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
   console.log(`Chat API: http://localhost:${PORT}/api/chats  (search/stats/export/delete also available)`);
