@@ -14,8 +14,8 @@ COPY . .
 # Expose port
 EXPOSE 9090
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+# Health check — waits for both HTTP server AND MongoDB to be ready
+HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=10 \
   CMD curl -f http://localhost:9090/health || exit 1
 
 # Run as non-root user

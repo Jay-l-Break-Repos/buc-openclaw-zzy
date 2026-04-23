@@ -1,6 +1,6 @@
 import express from 'express';
 import { checkTwitchAccessControl } from './access-control.js';
-import { connectDB } from './db.js';
+import { connectDB, isReady } from './db.js';
 import chatRouter from './routes/chats.js';
 
 const app = express();
@@ -11,9 +11,15 @@ app.use(express.json());
 // Mount chat API routes
 app.use('/api/chats', chatRouter);
 
-// Health check endpoint
+// Health check endpoint — reports DB readiness so the Docker HEALTHCHECK
+// and test harness can wait until the full stack is ready.
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', vulnerability: 'GHSA-33rq-m5x2-fvgf' });
+  const dbReady = isReady();
+  res.status(dbReady ? 200 : 503).json({
+    status: dbReady ? 'ok' : 'degraded',
+    db: dbReady ? 'connected' : 'connecting',
+    vulnerability: 'GHSA-33rq-m5x2-fvgf',
+  });
 });
 
 // Root endpoint with info

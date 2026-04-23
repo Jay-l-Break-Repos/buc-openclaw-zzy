@@ -5,9 +5,16 @@
  * falling back to a local default so the app can start without extra
  * configuration during development.
  *
- * Design: the HTTP server starts immediately regardless of DB state so
- * health-check endpoints always respond.  Chat endpoints check isReady()
- * and return 503 if the connection has not yet been established.
+ * Design:
+ *  - The HTTP server starts immediately (app.listen before connectDB) so
+ *    health-check endpoints always respond.
+ *  - connectDB() retries indefinitely with exponential back-off so that
+ *    transient failures (e.g. mongo sidecar not yet ready) are recovered
+ *    automatically.
+ *  - isReady() delegates to Mongoose's own readyState so it reflects the
+ *    live connection status rather than a stale boolean.
+ *  - Chat endpoints call requireDB() middleware and return 503 until the
+ *    connection is established.
  */
 
 import mongoose from 'mongoose';
@@ -15,32 +22,45 @@ import mongoose from 'mongoose';
 const MONGODB_URI =
   process.env.MONGODB_URI || 'mongodb://localhost:27017/twitch_chat';
 
-let isConnected = false;
-
 /**
- * Returns true once Mongoose has an open connection.
+ * Returns true when Mongoose has an open (ready) connection.
+ * readyState === 1 means "connected".
  */
 export function isReady() {
-  return isConnected;
+  return mongoose.connection.readyState === 1;
 }
 
 /**
- * Connect to MongoDB.  Never throws — errors are logged and the caller
- * can poll isReady() to know when the connection is up.
+ * Connect to MongoDB with automatic retry on failure.
+ * Uses exponential back-off capped at 10 s between attempts.
+ * Never throws — errors are logged and retried.
  */
 export async function connectDB() {
-  if (isConnected) return;
+  // Already connected or connecting — nothing to do.
+  if (mongoose.connection.readyState === 1 ||
+      mongoose.connection.readyState === 2) {
+    return;
+  }
 
-  try {
-    await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000,
-    });
-    isConnected = true;
-    console.log(`MongoDB connected: ${MONGODB_URI}`);
-  } catch (err) {
-    console.error(`MongoDB connection failed (${MONGODB_URI}): ${err.message}`);
-    // Do NOT re-throw — the HTTP server must keep running so health checks
-    // and other non-DB endpoints continue to respond.
+  const MAX_DELAY_MS = 10_000;
+  let attempt = 0;
+
+  while (true) {
+    attempt += 1;
+    try {
+      await mongoose.connect(MONGODB_URI, {
+        serverSelectionTimeoutMS: 5_000,
+      });
+      console.log(`MongoDB connected (attempt ${attempt}): ${MONGODB_URI}`);
+      return; // success — exit the retry loop
+    } catch (err) {
+      const delay = Math.min(1_000 * 2 ** (attempt - 1), MAX_DELAY_MS);
+      console.error(
+        `MongoDB connection failed (attempt ${attempt}): ${err.message}. ` +
+        `Retrying in ${delay}ms…`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
 }
 

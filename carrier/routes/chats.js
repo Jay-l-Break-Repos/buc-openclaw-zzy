@@ -19,7 +19,10 @@ const router = Router();
 /** Middleware: reject requests when MongoDB is not yet connected. */
 function requireDB(req, res, next) {
   if (!isReady()) {
-    return res.status(503).json({ error: 'Database not available' });
+    return res.status(503).json({
+      error: 'Database not available',
+      detail: 'MongoDB connection is not yet established. Please retry shortly.',
+    });
   }
   next();
 }
