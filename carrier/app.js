@@ -42,6 +42,10 @@ app.get('/', (req, res) => {
       '/test-scenarios': 'GET - Show test scenarios',
       'POST /api/chats': 'Store a new chat message',
       'GET /api/chats': 'List chat messages (supports ?limit=&offset=)',
+      'GET /api/chats/search': 'Search messages by text (?q=keyword)',
+      'GET /api/chats/stats': 'Message count per channel',
+      'GET /api/chats/export': 'Download all messages as JSON',
+      'DELETE /api/chats/:id': 'Remove a message by id',
     },
   });
 });
@@ -135,6 +139,10 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
   console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
   console.log(`Chat API: POST/GET http://localhost:${PORT}/api/chats`);
+  console.log(`Chat search:  GET  http://localhost:${PORT}/api/chats/search?q=keyword`);
+  console.log(`Chat stats:   GET  http://localhost:${PORT}/api/chats/stats`);
+  console.log(`Chat export:  GET  http://localhost:${PORT}/api/chats/export`);
+  console.log(`Chat delete:  DELETE http://localhost:${PORT}/api/chats/:id`);
 });
 
 // Attempt MongoDB connection in the background (non-blocking).
