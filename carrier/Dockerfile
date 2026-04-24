@@ -14,6 +14,10 @@ COPY . .
 # Expose port
 EXPOSE 9090
 
+# MongoDB connection URI — override at runtime, e.g.:
+#   docker run -e MONGODB_URI=mongodb://mongo:27017/openclaw-twitch ...
+ENV MONGODB_URI=mongodb://localhost:27017/openclaw-twitch
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:9090/health || exit 1

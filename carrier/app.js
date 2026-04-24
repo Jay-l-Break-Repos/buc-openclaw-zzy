@@ -1,17 +1,22 @@
 import express from 'express';
 import { checkTwitchAccessControl } from './access-control.js';
+import { connectDB } from './db.js';
+import chatsRouter from './routes/chats.js';
 
 const app = express();
 const PORT = process.env.PORT || 9090;
 
 app.use(express.json());
 
-// Health check endpoint
+// ── Chat history & analytics API ────────────────────────────────────────────
+app.use('/api/chats', chatsRouter);
+
+// ── Health check ─────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', vulnerability: 'GHSA-33rq-m5x2-fvgf' });
 });
 
-// Root endpoint with info
+// ── Root info ─────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({
     name: 'OpenClaw Twitch Access Control Vulnerability Demo',
@@ -20,12 +25,13 @@ app.get('/', (req, res) => {
     endpoints: {
       '/health': 'Health check',
       '/vuln': 'POST - Demonstrate the access control bypass',
-      '/test-scenarios': 'GET - Show test scenarios'
-    }
+      '/test-scenarios': 'GET - Show test scenarios',
+      '/api/chats': 'POST - Store a new chat message',
+    },
   });
 });
 
-// Test scenarios endpoint
+// ── Test scenarios ────────────────────────────────────────────────────────────
 app.get('/test-scenarios', (req, res) => {
   res.json({
     vulnerability: 'GHSA-33rq-m5x2-fvgf',
@@ -36,58 +42,52 @@ app.get('/test-scenarios', (req, res) => {
         payload: {
           message: { userId: '123456789', message: '@testbot hello', isMod: false, isOwner: false, isVip: false, isSub: false },
           account: { allowFrom: ['123456789'], requireMention: true },
-          botUsername: 'testbot'
+          botUsername: 'testbot',
         },
-        expected: 'allowed: true'
+        expected: 'allowed: true',
       },
       {
         name: 'VULNERABILITY: Bypass allowFrom when allowedRoles unset',
         payload: {
           message: { userId: 'attacker123', message: '@testbot exploit', isMod: false, isOwner: false, isVip: false, isSub: false },
           account: { allowFrom: ['123456789'], requireMention: true },
-          botUsername: 'testbot'
+          botUsername: 'testbot',
         },
-        expected: 'allowed: true (VULNERABLE - should be false!)'
+        expected: 'allowed: true (VULNERABLE - should be false!)',
       },
       {
         name: 'Fixed behavior: allowFrom with allowedRoles set (blocks correctly)',
         payload: {
           message: { userId: 'attacker123', message: '@testbot exploit', isMod: false, isOwner: false, isVip: false, isSub: false },
           account: { allowFrom: ['123456789'], allowedRoles: ['moderator'], requireMention: true },
-          botUsername: 'testbot'
+          botUsername: 'testbot',
         },
-        expected: 'allowed: false (correctly blocked by allowedRoles)'
-      }
-    ]
+        expected: 'allowed: false (correctly blocked by allowedRoles)',
+      },
+    ],
   });
 });
 
-// Vulnerability demonstration endpoint
+// ── Vulnerability demonstration ───────────────────────────────────────────────
 app.post('/vuln', (req, res) => {
   try {
     const { message, account, botUsername } = req.body;
-    
+
     if (!message || !account || !botUsername) {
       return res.status(400).json({
-        error: 'Missing required fields: message, account, botUsername'
+        error: 'Missing required fields: message, account, botUsername',
       });
     }
 
-    const result = checkTwitchAccessControl({
-      message,
-      account,
-      botUsername
-    });
+    const result = checkTwitchAccessControl({ message, account, botUsername });
 
-    // Analyze if this demonstrates the vulnerability
-    const isVulnerable = (
-      account.allowFrom && 
-      account.allowFrom.length > 0 && 
-      message.userId && 
+    const isVulnerable =
+      account.allowFrom &&
+      account.allowFrom.length > 0 &&
+      message.userId &&
       !account.allowFrom.includes(message.userId) &&
       (!account.allowedRoles || account.allowedRoles.length === 0) &&
-      result.allowed === true
-    );
+      result.allowed === true;
 
     res.json({
       vulnerability: 'GHSA-33rq-m5x2-fvgf',
@@ -95,26 +95,34 @@ app.post('/vuln', (req, res) => {
       result,
       analysis: {
         vulnerable: isVulnerable,
-        explanation: isVulnerable 
+        explanation: isVulnerable
           ? 'VULNERABILITY DEMONSTRATED: User not in allowFrom list was allowed due to missing early return'
-          : 'No vulnerability - either user is in allowlist, or allowedRoles is set, or access was properly denied'
-      }
+          : 'No vulnerability - either user is in allowlist, or allowedRoles is set, or access was properly denied',
+      },
     });
-
   } catch (error) {
     res.status(500).json({
       error: 'Internal server error',
-      message: error.message
+      message: error.message,
     });
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`OpenClaw Twitch vulnerability demo running on port ${PORT}`);
-  console.log(`Vulnerability: GHSA-33rq-m5x2-fvgf`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
-  console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
-});
+// ── Start server ──────────────────────────────────────────────────────────────
+connectDB()
+  .then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`OpenClaw Twitch vulnerability demo running on port ${PORT}`);
+      console.log(`Vulnerability: GHSA-33rq-m5x2-fvgf`);
+      console.log(`Health check:  http://localhost:${PORT}/health`);
+      console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
+      console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
+      console.log(`Chat API:      POST http://localhost:${PORT}/api/chats`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to connect to MongoDB, server not started:', err.message);
+    process.exit(1);
+  });
 
 export default app;
