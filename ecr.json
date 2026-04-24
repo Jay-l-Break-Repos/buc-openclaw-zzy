@@ -1,0 +1,25 @@
+{
+  "vuln_id": "GHSA-33rq-m5x2-fvgf",
+  "ecosystem": "npm",
+  "package": "openclaw",
+  "setup_complexity": "platform",
+  "app_port": 9090,
+  "env": {},
+  "sidecars": [],
+  "url": "http://localhost:9090",
+  "pushed_at": "2026-04-18T18:07:45.048946+00:00",
+  "dockerhub": {
+    "image": "brookeyangr/vulndock:ghsa-33rq-m5x2-fvgf",
+    "pull": [
+      "docker pull brookeyangr/vulndock:ghsa-33rq-m5x2-fvgf"
+    ],
+    "run": "docker run -d -p 9090:9090 --name ghsa-33rq-m5x2-fvgf brookeyangr/vulndock:ghsa-33rq-m5x2-fvgf"
+  },
+  "ecr": {
+    "image": "995133654082.dkr.ecr.us-east-1.amazonaws.com/vuldock/ghsa-1000:ghsa-33rq-m5x2-fvgf",
+    "pull": [
+      "docker pull 995133654082.dkr.ecr.us-east-1.amazonaws.com/vuldock/ghsa-1000:ghsa-33rq-m5x2-fvgf"
+    ],
+    "run": "docker run -d -p 9090:9090 --name ghsa-33rq-m5x2-fvgf 995133654082.dkr.ecr.us-east-1.amazonaws.com/vuldock/ghsa-1000:ghsa-33rq-m5x2-fvgf"
+  }
+}
