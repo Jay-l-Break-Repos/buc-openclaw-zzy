@@ -2,25 +2,31 @@ FROM node:18-slim
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json ./
+# Install curl for the HEALTHCHECK
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies
+# Create non-root user early so we can set ownership
+RUN addgroup --system --gid 1001 nodejs \
+ && adduser --system --uid 1001 --ingroup nodejs --no-create-home nextjs
+
+# Copy package files and install dependencies as root (faster layer caching)
+COPY package.json ./
 RUN npm install --production
 
-# Copy application code
+# Copy application code and fix ownership in one layer
 COPY . .
+RUN chown -R nextjs:nodejs /app
 
 # Expose port
 EXPOSE 9090
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+# Health check — server starts immediately (in-memory fallback),
+# so /health being reachable means the API is ready.
+HEALTHCHECK --interval=5s --timeout=3s --start-period=60s --retries=12 \
   CMD curl -f http://localhost:9090/health || exit 1
 
-# Run as non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+# Drop to non-root user
 USER nextjs
 
 CMD ["npm", "start"]

@@ -1,20 +1,32 @@
 import express from 'express';
-import mongoose from 'mongoose';
 import { checkTwitchAccessControl } from './access-control.js';
-import chatsRouter from './routes/chats.js';
+import { connectDB, isReady } from './db.js';
+import chatRouter from './routes/chats.js';
 
 const app = express();
 const PORT = process.env.PORT || 9090;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/twitch-chat';
 
 app.use(express.json());
 
-// Mount chat routes
-app.use('/api/chats', chatsRouter);
+// Mount chat API routes
+app.use('/api/chats', chatRouter);
 
-// Health check endpoint
+// Health check endpoint — always returns 200 so the server is always
+// reachable. DB status is reported in the body for informational purposes.
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', vulnerability: 'GHSA-33rq-m5x2-fvgf' });
+  res.status(200).json({
+    status: 'ok',
+    db: isReady() ? 'connected' : 'connecting',
+    vulnerability: 'GHSA-33rq-m5x2-fvgf',
+  });
+});
+
+// Readiness probe — returns 200 only when MongoDB is connected.
+app.get('/ready', (req, res) => {
+  if (!isReady()) {
+    return res.status(503).json({ ready: false, db: 'connecting' });
+  }
+  res.json({ ready: true, db: 'connected' });
 });
 
 // Root endpoint with info
@@ -24,10 +36,16 @@ app.get('/', (req, res) => {
     vulnerability: 'GHSA-33rq-m5x2-fvgf',
     description: 'Demonstrates allowFrom allowlist bypass in OpenClaw Twitch plugin',
     endpoints: {
-      '/health': 'Health check',
+      '/health': 'Health check (always 200)',
+      '/ready': 'Readiness probe (200 when DB connected, 503 otherwise)',
       '/vuln': 'POST - Demonstrate the access control bypass',
       '/test-scenarios': 'GET - Show test scenarios',
-      '/api/chats': 'POST - Store a new chat message'
+      'POST /api/chats': 'Store a new chat message',
+      'GET /api/chats': 'List chat messages (supports ?limit=&offset=)',
+      'GET /api/chats/search': 'Search messages by text/user/channel (?q=&limit=&offset=)',
+      'GET /api/chats/stats': 'Analytics: totals, per-channel counts, top users, recent activity',
+      'GET /api/chats/export': 'Export all messages as JSON or CSV (?format=json|csv)',
+      'DELETE /api/chats/:id': 'Delete a message by id',
     }
   });
 });
@@ -116,18 +134,19 @@ app.post('/vuln', (req, res) => {
   }
 });
 
+// Start the HTTP server immediately — the chat routes work with or without
+// MongoDB (in-memory fallback). connectDB() retries in the background.
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`OpenClaw Twitch vulnerability demo running on port ${PORT}`);
   console.log(`Vulnerability: GHSA-33rq-m5x2-fvgf`);
   console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`Readiness probe: http://localhost:${PORT}/ready`);
   console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
   console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
-  console.log(`Chat endpoint: POST http://localhost:${PORT}/api/chats`);
+  console.log(`Chat API: http://localhost:${PORT}/api/chats`);
 });
 
-// Connect to MongoDB then start the server (used when run directly)
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch((err) => console.error('MongoDB connection error:', err));
+// Attempt MongoDB connection in the background (non-blocking).
+connectDB().catch(() => {});
 
 export default app;
