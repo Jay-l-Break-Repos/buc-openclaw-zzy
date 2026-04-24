@@ -1,10 +1,16 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { checkTwitchAccessControl } from './access-control.js';
+import chatsRouter from './routes/chats.js';
 
 const app = express();
 const PORT = process.env.PORT || 9090;
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/twitch-chat';
 
 app.use(express.json());
+
+// Mount chat routes
+app.use('/api/chats', chatsRouter);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -20,7 +26,8 @@ app.get('/', (req, res) => {
     endpoints: {
       '/health': 'Health check',
       '/vuln': 'POST - Demonstrate the access control bypass',
-      '/test-scenarios': 'GET - Show test scenarios'
+      '/test-scenarios': 'GET - Show test scenarios',
+      '/api/chats': 'POST - Store a new chat message'
     }
   });
 });
@@ -115,6 +122,12 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log(`Test scenarios: http://localhost:${PORT}/test-scenarios`);
   console.log(`Exploit endpoint: POST http://localhost:${PORT}/vuln`);
+  console.log(`Chat endpoint: POST http://localhost:${PORT}/api/chats`);
 });
+
+// Connect to MongoDB then start the server (used when run directly)
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('Connected to MongoDB'))
+  .catch((err) => console.error('MongoDB connection error:', err));
 
 export default app;
