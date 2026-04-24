@@ -6,15 +6,12 @@ import chatRouter from './routes/chats.js';
 const app = express();
 const PORT = process.env.PORT || 9090;
 
-app.use(express.json());
-
-// Handle malformed JSON bodies
-app.use((err, req, res, next) => {
-  if (err.type === 'entity.parse.failed') {
-    return res.status(400).json({ error: 'Invalid JSON in request body' });
-  }
-  next(err);
+// Prevent unhandled rejections from crashing the server
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err);
 });
+
+app.use(express.json());
 
 // Mount chat API routes
 app.use('/api/chats', chatRouter);
@@ -142,6 +139,16 @@ app.post('/vuln', (req, res) => {
   }
 });
 
+// Global error handler — must be after all routes, must have 4 params
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Invalid JSON in request body' });
+  }
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
 // Start the HTTP server immediately — the chat routes work with or without
 // MongoDB (in-memory fallback). connectDB() retries in the background.
 app.listen(PORT, '0.0.0.0', () => {
@@ -156,11 +163,5 @@ app.listen(PORT, '0.0.0.0', () => {
 
 // Attempt MongoDB connection in the background (non-blocking).
 connectDB().catch(() => {});
-
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
-});
 
 export default app;
