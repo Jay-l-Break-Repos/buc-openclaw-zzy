@@ -1,0 +1,16 @@
+{
+  "name": "openclaw-twitch-vuln-carrier",
+  "version": "1.0.0",
+  "description": "Carrier app to demonstrate GHSA-33rq-m5x2-fvgf - OpenClaw Twitch access control bypass",
+  "main": "app.js",
+  "type": "module",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
