@@ -4,6 +4,7 @@
   "package": "openclaw",
   "setup_complexity": "platform",
   "app_port": 9090,
+  "health_path": "/health",
   "env": {},
   "sidecars": [],
   "url": "http://localhost:9090",
