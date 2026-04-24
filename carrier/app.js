@@ -8,6 +8,14 @@ const PORT = process.env.PORT || 9090;
 
 app.use(express.json());
 
+// Handle malformed JSON bodies
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Invalid JSON in request body' });
+  }
+  next(err);
+});
+
 // Mount chat API routes
 app.use('/api/chats', chatRouter);
 
@@ -148,5 +156,11 @@ app.listen(PORT, '0.0.0.0', () => {
 
 // Attempt MongoDB connection in the background (non-blocking).
 connectDB().catch(() => {});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
 
 export default app;
