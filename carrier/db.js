@@ -29,6 +29,7 @@ export function isReady() {
 
 /**
  * Attempt to connect to MongoDB (non-blocking, retries in background).
+ * Gives up after MAX_ROUNDS and the app continues with in-memory fallback.
  */
 export function connectDB() {
   if (mongoose.connection.readyState === 1) return Promise.resolve();
@@ -36,9 +37,10 @@ export function connectDB() {
 
   connectionPromise = (async () => {
     const MAX_DELAY_MS = 10_000;
+    const MAX_ROUNDS = 5;
     let round = 0;
 
-    while (true) {
+    while (round < MAX_ROUNDS) {
       round += 1;
       for (const uri of URIS) {
         if (mongoose.connection.readyState !== 0) {
@@ -52,10 +54,13 @@ export function connectDB() {
           console.error(`MongoDB connect failed (round ${round}, ${uri}): ${err.message}`);
         }
       }
-      const delay = Math.min(1_000 * 2 ** (round - 1), MAX_DELAY_MS);
-      console.error(`All MongoDB URIs failed. Retrying in ${delay}ms…`);
-      await new Promise((r) => setTimeout(r, delay));
+      if (round < MAX_ROUNDS) {
+        const delay = Math.min(1_000 * 2 ** (round - 1), MAX_DELAY_MS);
+        console.error(`All MongoDB URIs failed. Retrying in ${delay}ms…`);
+        await new Promise((r) => setTimeout(r, delay));
+      }
     }
+    console.log('MongoDB unavailable after retries. Using in-memory fallback.');
   })();
 
   return connectionPromise;
